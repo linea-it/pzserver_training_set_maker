@@ -142,4 +142,4 @@ config.yaml
 config.yml
 
 # process folders 
-*/process* 
+process* 

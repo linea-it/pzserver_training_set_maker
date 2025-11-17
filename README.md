@@ -26,14 +26,8 @@ source env.sh
 
 To install the pipeline at once:
 
-```
-./install_pipeline.sh
-```
-
-Alternatively, to install a single one:
-
-```
-./training_set_maker/install.sh
+```bash
+./install.sh
 ```
 
 The `setup.sh` will suggest a directory where the pipelines and datasets are installed, type 'yes' to confirm or 'no' to configure the desired path in each case with the respective environment variables and then run again `setup.sh`.
@@ -47,7 +41,6 @@ To execute, simply:
 
 ```bash
 # execute training set maker
-cd $PIPELINES_DIR/training_set_maker
 mkdir process001
 ./run.sh config.yaml process001
 ```
