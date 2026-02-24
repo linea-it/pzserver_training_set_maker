@@ -42,6 +42,9 @@ param:
   flux_type: "auto"
   convert_flux_to_mag: true
   dereddening: "sfd"
+  split_method: "random"
+  train_fraction: 0.7
+  random_seed: null
   crossmatch:
     radius_arcsec: 1.0
     n_neighbors: 1

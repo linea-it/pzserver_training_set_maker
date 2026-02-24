@@ -5,6 +5,8 @@ import datetime
 import os
 import time
 from pathlib import Path
+import numpy as np
+import pandas as pd
 
 import lsdb
 from dask.distributed import Client
@@ -171,6 +173,18 @@ class Runner:
                 self.logger.exception("Error when cross-matching")
                 raise
 
+            split_method = self.param.get("split_method", "random")
+            train_fraction = self.param.get("train_fraction", 0.7)
+            random_seed = self.param.get("random_seed", None)
+
+            try:
+                data = self.__split_train_test(
+                    data, split_method, train_fraction, random_seed
+                )
+            except ValueError:
+                self.logger.exception("Invalid parameters for train/test split")
+                raise
+
             suffix = self.specz_suffix
             data_columns = data.columns
             specz_columns = {}
@@ -259,6 +273,43 @@ class Runner:
         return {
             k: specz_columns[v] if v in specz_columns else v for k, v in columns.items()
         }
+
+    def __split_train_test(
+        self,
+        df: pd.DataFrame,
+        split_method: str = "random",
+        train_fraction: float = 0.7,
+        random_seed: int | None = None,
+    ) -> pd.DataFrame:
+        """
+        Add a boolean column 'is_training_set' to the dataframe.
+
+        Args:
+            df (pd.DataFrame): Crossmatching result table.
+            split_method (str): Method used to split dataset. Currently supports: "random".
+            train_fraction (float): Fraction of objects assigned to training set
+                (0 < train_fraction < 1).
+            random_seed (int or None): Random seed for reproducibility.
+
+        Return:
+            pd.DataFrame: Copy of input DataFrame with new column 'is_training_set'.
+        """
+
+        if not 0 < train_fraction < 1:
+            raise ValueError("train_fraction must be between 0 and 1")
+
+        if random_seed is not None:
+            np.random.seed(random_seed)
+
+        if split_method == "random":
+            df["is_training_set"] = (np.random.rand(len(df)) < train_fraction).astype(
+                int
+            )
+
+        else:
+            raise ValueError(f"Unknown split_method: {split_method}")
+
+        return df
 
     def __register_outputs(self, root_dir, filepath, assoc, role="main"):
         """Register outputs in process.yml
