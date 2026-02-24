@@ -87,9 +87,13 @@ class Param(BaseModel):
         n_neighbors: int = 1
 
     crossmatch: Crossmatch = Crossmatch()
+    duplicate_criteria: str = "closest"
     flux_type: str = "auto"
     convert_flux_to_mag: bool = True
     dereddening: str = "sfd"
+    split_method: str = "random"
+    train_fraction: float = 0.7
+    random_seed: int | None = None
 
 
 class Config(BaseModel):
