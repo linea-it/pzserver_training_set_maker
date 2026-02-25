@@ -38,7 +38,7 @@ output_format: "csv"
 output_name: "tsm"
 
 param:
-  duplicate_criteria: "closest"
+  # duplicate_criteria: "closest"
   flux_type: "auto"
   convert_flux_to_mag: true
   dereddening: "sfd"

@@ -82,12 +82,12 @@ class Inputs(BaseModel):
 class Param(BaseModel):
 
     class Crossmatch(BaseModel):
-        output_catalog_name: str = "tsm_cross_001"
         radius_arcsec: float = 1.0
         n_neighbors: int = 1
 
     crossmatch: Crossmatch = Crossmatch()
-    duplicate_criteria: str = "closest"
+    ## Currently, "duplicate_criteria" is the only option.
+    # duplicate_criteria: str = "closest"
     flux_type: str = "auto"
     convert_flux_to_mag: bool = True
     dereddening: str = "sfd"
