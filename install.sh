@@ -23,18 +23,20 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-# --- Accept Anaconda TOS when supported by this conda; otherwise skip ---
+# --- helper ---
 conda_has_cmd() {
   conda commands 2>/dev/null | awk '{print $1}' | grep -qx "$1"
 }
 
-if conda_has_cmd tos; then
-  log "conda 'tos' available → accepting ToS for required channels…"
-  conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
-  conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r    || true
-else
-  log "conda 'tos' not available → skipping ToS acceptance (not needed on this setup)."
-fi
+accept_conda_tos() {
+  if conda_has_cmd tos; then
+    log "conda 'tos' available → accepting ToS for required channels…"
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
+  else
+    log "conda 'tos' not available → skipping ToS acceptance."
+  fi
+}
 
 # ---------------- Hash do env.yaml ----------------
 ENV_HASH=$(sha256sum "$ENV_FILE" | awk '{print $1}')
@@ -66,11 +68,10 @@ if env_exists; then
   fi
 fi
 
-# ---------------- Criar environment ----------------
+
+accept_conda_tos
 log "📦 Creating environment '${ENV_NAME}'..."
 conda env create -n "$ENV_NAME" -f "$ENV_FILE"
-
-# ---------------- Salvar hash ----------------
 echo "$ENV_HASH" > "$HASH_FILE"
 
 log "✅ Installation complete."
