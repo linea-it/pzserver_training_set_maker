@@ -1,7 +1,6 @@
 name: pipe_tsm
 channels:
   - conda-forge
-  - defaults
 dependencies:
   - python=3.12
   - pytables
@@ -11,7 +10,6 @@ dependencies:
   - cdshealpix==0.7.2
   - lsdb==0.6.4
   - hats==0.6.4
-  - pip:
-      - PyYaml==6.0.2
-      - tables_io==1.0.0
-      - h5py==3.14.0
+  - pyyaml==6.0.2
+  - tables-io==1.0.0
+  - h5py==3.14.0
