@@ -3,6 +3,8 @@ set -Eeuo pipefail
 set -o errtrace
 
 ENV_NAME="pipe_tsm"
+MICROMAMBA_BIN="${MICROMAMBA_BIN:-micromamba}"
+MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/.micromamba}"
 
 log() {
   local ts
@@ -41,11 +43,11 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 # ---------------- Run Pipeline ----------------
 log "Running pipeline..."
 
-conda run --no-capture-output -n "$ENV_NAME" bash -c "
+"$MICROMAMBA_BIN" run --root-prefix "$MAMBA_ROOT_PREFIX" -n "$ENV_NAME" bash -c "
   export PATH=${PIPE_BASE}/scripts:\$PATH
   export PYTHONPATH=${PIPE_BASE}/packages:\$PYTHONPATH
-  exec tsm-run '$CONFIG_PATH' '$RUN_DIR'
-"
+  exec tsm-run \"\$1\" \"\$2\"
+" bash "$CONFIG_PATH" "$RUN_DIR"
 
 log "✅ Success (run dir: ${RUN_DIR})"
 exit 0
