@@ -151,7 +151,17 @@ class Runner:
                     f"Dataset path does not exist: {str(dataset_path)}"
                 )
 
-            dataset = lsdb.open_catalog(dataset_path)
+            selected_cols = self.param.get("selected_cols", [])
+            if selected_cols is None:
+                selected_cols = []
+            if not isinstance(selected_cols, list):
+                raise ValueError("param.selected_cols must be a list")
+
+            open_catalog_args = {}
+            if selected_cols:
+                open_catalog_args["columns"] = selected_cols
+
+            dataset = lsdb.open_catalog(dataset_path, **open_catalog_args)
             duplicate_criteria = self.param.get("duplicate_criteria", "closest")
             cm_args = self.param.get("crossmatch", {})
             self.logger.debug("Crossmatch args: %s", cm_args)
@@ -247,6 +257,9 @@ class Runner:
             str: dataset path
         """
         dataset_path = self.inputs.get("dataset").get("path")
+
+        if self.param.get("use_absolute_lsdb_path", False):
+            return str(dataset_path)
 
         flux_type = self.param.get("flux_type")
         convert_flux_to_mag = self.param.get("convert_flux_to_mag")
