@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 import lsdb
 from dask.distributed import Client
@@ -151,9 +152,22 @@ class Runner:
                     f"Dataset path does not exist: {str(dataset_path)}"
                 )
 
-            dataset = lsdb.open_catalog(dataset_path)
+            selected_cols = self.param.get("selected_cols", [])
+            if selected_cols is None:
+                selected_cols = []
+            if not isinstance(selected_cols, list):
+                raise ValueError("param.selected_cols must be a list")
+
+            open_catalog_args = {}
+            if selected_cols:
+                open_catalog_args["columns"] = selected_cols
+            else:
+                open_catalog_args["columns"] = self.__get_catalog_columns(dataset_path)
+
+            dataset = lsdb.open_catalog(dataset_path, **open_catalog_args)
             duplicate_criteria = self.param.get("duplicate_criteria", "closest")
             cm_args = self.param.get("crossmatch", {})
+            cm_args["suffix_method"] = "all_columns"
             self.logger.debug("Crossmatch args: %s", cm_args)
 
             try:
@@ -248,6 +262,9 @@ class Runner:
         """
         dataset_path = self.inputs.get("dataset").get("path")
 
+        if self.param.get("use_absolute_lsdb_path", False):
+            return str(dataset_path)
+
         flux_type = self.param.get("flux_type")
         convert_flux_to_mag = self.param.get("convert_flux_to_mag")
 
@@ -261,6 +278,21 @@ class Runner:
         ptmd_path = Path(dataset_path, flux_or_mag, flux_type, dereddening, "catalog")
 
         return str(ptmd_path)
+
+    def __get_catalog_columns(self, dataset_path):
+        """Get catalog columns excluding legacy HATS partition columns."""
+
+        hats_partition_cols = {"Norder", "Dir", "Npix"}
+        parquet_files = sorted(Path(dataset_path).rglob("*.parquet"))
+
+        if not parquet_files:
+            return []
+
+        schema = pq.read_schema(parquet_files[0])
+        columns = [name for name in schema.names if name not in hats_partition_cols]
+        self.logger.debug("Opening catalog with projected columns: %s", columns)
+
+        return columns
 
     def __get_columns_associations(self, columns, specz_columns):
         """Get columns associations of the product output

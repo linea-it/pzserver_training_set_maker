@@ -39,6 +39,8 @@ output_name: "tsm"
 
 param:
   # duplicate_criteria: "closest"
+  use_absolute_lsdb_path: false
+  selected_cols: []
   flux_type: "auto"
   convert_flux_to_mag: true
   dereddening: "sfd"
