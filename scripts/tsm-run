@@ -131,18 +131,18 @@ class Runner:
         specz = specz.pop()
         self.logger.debug(f"Specz used: {specz}")
 
+        df = ProductHandle().df_from_file(specz.get("path"))
+
+        columns = specz.get("columns", {})
+
+        ra = columns.get("ra", "ra")
+        dec = columns.get("dec", "dec")
+
+        specz_df = lsdb.from_dataframe(
+            df, use_pyarrow_types=False, ra_column=ra, dec_column=dec
+        )
+
         with Client(self.cluster) as client:
-            df = ProductHandle().df_from_file(specz.get("path"))
-
-            columns = specz.get("columns", {})
-
-            ra = columns.get("ra", "ra")
-            dec = columns.get("dec", "dec")
-
-            specz_df = lsdb.from_dataframe(
-                df, use_pyarrow_types=False, ra_column=ra, dec_column=dec
-            )
-
             dataset_path = self.__get_photometric_data_path()
             dataset_id = self.inputs.get("dataset").get("columns", {}).get("id", "id")
 
