@@ -10,15 +10,15 @@ DASK_EXECUTOR = os.getenv("DASK_EXECUTOR", "local")
 class Slurm(BaseModel):
 
     class Instance(BaseModel):
-        cores: int = 20
+        cores: int = 16
         processes: int = 4
-        memory: str = "50GB"
+        memory: str = "48GB"
         queue: str = "cpu_pipelines"
         account: str = "hpc-pipelines"
         job_extra_directives: list[str] = ["--propagate", "--time=2:00:00"]
 
     class Adapt(BaseModel):
-        maximum_jobs: int = 10
+        maximum_jobs: int = 12
 
     instance: Instance = Instance()
     adapt: Adapt = Adapt()
