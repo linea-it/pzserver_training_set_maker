@@ -11,15 +11,16 @@ executor:
     memory_limit: "1GiB"
   # args:
   #   instance:
-  #     cores: 54
-  #     processes: 1
-  #     memory: "123GiB"
-  #     queue: "cpu"
+  #     cores: 16
+  #     processes: 4
+  #     memory: "48GB"
+  #     queue: "cpu_small"
+  #     account: "hpc-public"
   #     job_extra_directives:
   #       - "--propagate"
   #       - "--time=2:00:00"
   #   adapt:
-  #     maximum_jobs: 10
+  #     maximum_jobs: 12
 
 inputs:
   dataset:
