@@ -9,10 +9,10 @@
 #SBATCH --error={err}
 #SBATCH --partition=cpu_pipelines
 #SBATCH --propagate
+#SBATCH --mem-per-cpu=16G
 
 {cmd}
 
 echo $? >> return.code
 
 echo "Done!"
-
