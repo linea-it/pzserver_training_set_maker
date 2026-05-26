@@ -5,6 +5,7 @@ import datetime
 import os
 import time
 from pathlib import Path
+import hashlib
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
@@ -131,20 +132,36 @@ class Runner:
         specz = specz.pop()
         self.logger.debug(f"Specz used: {specz}")
 
-        df = ProductHandle().df_from_file(specz.get("path"))
-
         columns = specz.get("columns", {})
-
+        self.__validate_required_specz_columns(columns)
         ra = columns.get("ra", "ra")
         dec = columns.get("dec", "dec")
 
-        specz_df = lsdb.from_dataframe(
-            df, use_pyarrow_types=False, ra_column=ra, dec_column=dec
+        specz_path = str(specz.get("path"))
+        specz_format = str(specz.get("format", "")).lower()
+        specz_is_hats = specz_format == "hats" or self.__is_hats_catalog_path(
+            specz_path
         )
 
         with Client(self.cluster) as client:
+            if specz_is_hats:
+                specz_catalog_columns = self.__get_catalog_columns(specz_path)
+                self.logger.debug(
+                    "Opening specz as HATS catalog with projected columns: path=%s columns=%s",
+                    specz_path,
+                    specz_catalog_columns,
+                )
+                specz_open_args = {}
+                if specz_catalog_columns:
+                    specz_open_args["columns"] = specz_catalog_columns
+                specz_df = lsdb.open_catalog(specz_path, **specz_open_args)
+            else:
+                df = ProductHandle().df_from_file(specz_path)
+                specz_df = lsdb.from_dataframe(
+                    df, use_pyarrow_types=False, ra_column=ra, dec_column=dec
+                )
+
             dataset_path = self.__get_photometric_data_path()
-            dataset_id = self.inputs.get("dataset").get("columns", {}).get("id", "id")
 
             if not os.path.exists(dataset_path):
                 self.logger.error("Dataset path does not exist: %s", str(dataset_path))
@@ -165,21 +182,12 @@ class Runner:
                 open_catalog_args["columns"] = self.__get_catalog_columns(dataset_path)
 
             dataset = lsdb.open_catalog(dataset_path, **open_catalog_args)
-            duplicate_criteria = self.param.get("duplicate_criteria", "closest")
             cm_args = self.param.get("crossmatch", {})
             cm_args["suffix_method"] = "all_columns"
             self.logger.debug("Crossmatch args: %s", cm_args)
 
             try:
-                cross = specz_df.crossmatch(dataset, **cm_args)
-                if duplicate_criteria == "closest":
-                    suffix_dataset = cm_args.get("suffixes")[1]
-                    _id = f"{dataset_id}{suffix_dataset}"
-                    cross = cross._ddf.shuffle(on=_id).map_partitions(
-                        lambda x: x.sort_values("_dist_arcsec").drop_duplicates(_id)
-                    )
-                data = cross.compute()
-                client.close()
+                data = specz_df.crossmatch(dataset, **cm_args)
             except ValueError as err:
                 if "size 0 inputs" in str(err):
                     self.logger.exception("No cross matches were found!")
@@ -200,7 +208,7 @@ class Runner:
                 raise
 
             suffix = self.specz_suffix
-            data_columns = data.columns
+            data_columns = list(data.columns)
             specz_columns = {}
 
             self.logger.debug(f"Output columns: {data_columns}")
@@ -215,18 +223,41 @@ class Runner:
 
             if specz_columns:
                 self.logger.debug(f"Renaming columns: {specz_columns}")
-                data.rename(columns=specz_columns, inplace=True)
+                data = data.rename(columns=specz_columns)
 
             if not self.output_format:
-                self.output_format = specz.get("format")
+                self.output_format = (
+                    "hats" if specz_is_hats else specz.get("format", "parquet")
+                )
 
-            outputfile = create_output(
+            if self.output_format:
+                self.output_format = str(self.output_format).lower()
+
+            if self.output_format == "specz":
+                self.output_format = (
+                    "hats"
+                    if specz_is_hats
+                    else str(specz.get("format", "parquet")).lower()
+                )
+
+            hats_ra_col, hats_dec_col = ra, dec
+            if self.output_format == "hats":
+                data = self.__drop_hats_partition_columns(data)
+                hats_ra_col, hats_dec_col = self.__resolve_hats_coordinate_columns(
+                    list(data.columns),
+                    ra_column=ra,
+                    dec_column=dec,
+                )
+
+            output_product = create_output(
                 data,
                 self.cwd,
                 self.output_root_dir,
                 self.output_dir,
                 self.output_name,
                 self.output_format,
+                ra_column=hats_ra_col,
+                dec_column=hats_dec_col,
             )
 
             columns_suffix = {}
@@ -238,7 +269,7 @@ class Runner:
                 columns_suffix, specz_columns
             )
 
-            self.__register_outputs(self.output_root_dir, outputfile, columns_assoc)
+            self.__register_outputs(self.output_root_dir, output_product, columns_assoc)
 
         self.end_time = time.time() - self.start_time
         self.logger.info("Time elapsed: %s", str(self.end_time))
@@ -279,6 +310,16 @@ class Runner:
 
         return str(ptmd_path)
 
+    def __is_hats_catalog_path(self, input_path):
+        """Detect whether a path points to a HATS catalog directory."""
+        path = Path(input_path)
+        if not path.exists() or not path.is_dir():
+            return False
+        return any(
+            path.joinpath(filename).exists()
+            for filename in ("hats.properties", "properties")
+        )
+
     def __get_catalog_columns(self, dataset_path):
         """Get catalog columns excluding legacy HATS partition columns."""
 
@@ -302,13 +343,34 @@ class Runner:
             specz_columns (dict): output columns
         """
 
-        return {
+        associations = {
             k: specz_columns[v] if v in specz_columns else v for k, v in columns.items()
         }
+        required = {"ra", "dec", "z"}
+        missing = sorted(required - set(associations.keys()))
+        if missing:
+            raise ValueError(
+                f"Missing required specz column association(s): {', '.join(missing)}"
+            )
+        return associations
+
+    def __validate_required_specz_columns(self, columns):
+        """Validate required specz coordinate/redshift columns in config."""
+        if not isinstance(columns, dict):
+            raise ValueError("inputs.specz[0].columns must be a dictionary.")
+
+        required = ("ra", "dec", "z")
+        missing = [key for key in required if not columns.get(key)]
+        if missing:
+            raise ValueError(
+                "inputs.specz[0].columns must define required keys: "
+                "ra, dec, z. Missing: "
+                + ", ".join(missing)
+            )
 
     def __split_train_test(
         self,
-        df: pd.DataFrame,
+        df,
         split_method: str = "random",
         train_fraction: float = 0.7,
         random_seed: int | None = None,
@@ -330,18 +392,90 @@ class Runner:
         if not 0 < train_fraction < 1:
             raise ValueError("train_fraction must be between 0 and 1")
 
+        if split_method != "random":
+            raise ValueError(f"Unknown split_method: {split_method}")
+
+        if self.__is_dask_dataframe(df):
+            seed = int(random_seed) if random_seed is not None else int(time.time())
+            if hasattr(df, "_ddf"):
+                meta_source = df._ddf._meta
+            else:
+                meta_source = df._meta
+
+            meta = meta_source.assign(is_training_set=pd.Series(dtype="int64"))
+
+            def _assign_flag(partition, partition_info=None):
+                partition = partition.copy()
+                partition_number = (
+                    int(partition_info.get("number", 0))
+                    if isinstance(partition_info, dict)
+                    else 0
+                )
+                # Stable per-partition seed to keep output reproducible when random_seed is provided.
+                partition_seed = int(
+                    hashlib.sha256(
+                        f"{seed}:{partition_number}".encode("utf-8")
+                    ).hexdigest()[:8],
+                    16,
+                )
+                rng = np.random.default_rng(partition_seed)
+                partition["is_training_set"] = (
+                    rng.random(len(partition)) < train_fraction
+                ).astype(int)
+                return partition
+
+            return df.map_partitions(
+                _assign_flag,
+                meta=meta,
+                partition_info=True,
+            )
+
         if random_seed is not None:
             np.random.seed(random_seed)
 
-        if split_method == "random":
-            df["is_training_set"] = (np.random.rand(len(df)) < train_fraction).astype(
-                int
-            )
-
-        else:
-            raise ValueError(f"Unknown split_method: {split_method}")
-
+        df = df.copy()
+        df["is_training_set"] = (np.random.rand(len(df)) < train_fraction).astype(int)
         return df
+
+    @staticmethod
+    def __is_dask_dataframe(obj):
+        """Check if object looks like a Dask DataFrame."""
+        return all(
+            hasattr(obj, attr) for attr in ("map_partitions", "compute", "npartitions")
+        )
+
+    def __resolve_hats_coordinate_columns(
+        self, columns, ra_column="ra", dec_column="dec"
+    ):
+        """Resolve coordinate columns for HATS export."""
+        colset = set(columns)
+        if ra_column in colset and dec_column in colset:
+            return ra_column, dec_column
+
+        if "ra" in colset and "dec" in colset:
+            return "ra", "dec"
+
+        raise ValueError(
+            f"HATS output requires coordinate columns. Not found: ra='{ra_column}', dec='{dec_column}'."
+        )
+
+    def __drop_hats_partition_columns(self, data):
+        """Drop HATS partition columns that should not be part of output payload."""
+        partition_columns = {
+            "Norder",
+            "Dir",
+            "Npix",
+            "Norder_specz",
+            "Dir_specz",
+            "Npix_specz",
+        }
+        available = set(getattr(data, "columns", []))
+        to_drop = sorted(partition_columns.intersection(available))
+        if not to_drop:
+            return data
+
+        self.logger.debug("Dropping HATS partition columns from output: %s", to_drop)
+        return data.drop(columns=to_drop, errors="ignore")
 
     def __register_outputs(self, root_dir, filepath, assoc, role="main"):
         """Register outputs in process.yml

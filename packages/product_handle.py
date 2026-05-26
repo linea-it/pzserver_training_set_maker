@@ -17,7 +17,16 @@ OpInt = Union[int, None]
 OpStr = Union[str, None]
 
 
-def create_output(data, cwd_dir, output_root_dir, output_dir, output_name, extension):
+def create_output(
+    data,
+    cwd_dir,
+    output_root_dir,
+    output_dir,
+    output_name,
+    extension,
+    ra_column="ra",
+    dec_column="dec",
+):
     """Create output file
 
     Args:
@@ -31,15 +40,27 @@ def create_output(data, cwd_dir, output_root_dir, output_dir, output_name, exten
         str: output filepath
     """
 
+    extension = extension.lower()
     outputfile = str(Path(output_dir, f"{output_name}.{extension}"))
     output_full_file = str(Path(output_root_dir, outputfile).resolve())
     output_temp = str(Path(cwd_dir, f"{output_name}.{extension}"))
 
     match extension:
         case "csv":
+            if hasattr(data, "compute") and callable(data.compute):
+                data = data.compute()
             data.to_csv(output_temp)
         case "fits" | "fit" | "hf5" | "hdf5" | "h5" | "pq" | "parquet":
+            if hasattr(data, "compute") and callable(data.compute):
+                data = data.compute()
             tables_io.write(data, output_temp, extension)
+        case "hats":
+            _write_hats_output(
+                data,
+                output_temp,
+                ra_column=ra_column,
+                dec_column=dec_column,
+            )
         case "votable":
             raise NotImplementedError("VOTable not implemented")
             # outputfile = str(Path(output_dir, f"{output_name}.xml").resolve())
@@ -52,9 +73,112 @@ def create_output(data, cwd_dir, output_root_dir, output_dir, output_name, exten
             )
 
     # Copy the output temporary to the output full dir
-    shutil.copy2(output_temp, output_full_file)
+    if extension == "hats":
+        src = Path(output_temp)
+        dst = Path(output_full_file)
+        if dst.exists():
+            if dst.is_dir():
+                shutil.rmtree(dst, ignore_errors=True)
+            else:
+                dst.unlink(missing_ok=True)
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+    else:
+        shutil.copy2(output_temp, output_full_file)
 
     return outputfile
+
+
+def _write_hats_output(
+    data,
+    output_dir: str,
+    ra_column: str = "ra",
+    dec_column: str = "dec",
+):
+    """Persist output dataframe as a HATS catalog directory.
+
+    This helper uses lsdb runtime APIs with compatibility fallbacks because
+    writer method names may vary across versions.
+    """
+    output_path = Path(output_dir)
+
+    if output_path.exists():
+        if output_path.is_dir():
+            shutil.rmtree(output_path, ignore_errors=True)
+        else:
+            output_path.unlink(missing_ok=True)
+
+    try:
+        import lsdb
+    except Exception as error:
+        raise RuntimeError(
+            "lsdb is required to export HATS output in training_set_maker."
+        ) from error
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if hasattr(data, "to_hats") and callable(getattr(data, "to_hats")):
+        _write_catalog_like_to_hats(data, output_path)
+        return
+
+    # lsdb.from_dataframe currently expects an in-memory dataframe in this runtime.
+    # Keep lazy path when a catalog writer is available; otherwise materialize as fallback.
+    if hasattr(data, "compute") and callable(data.compute):
+        data = data.compute()
+
+    if not hasattr(data, "columns") or not {ra_column, dec_column}.issubset(set(data.columns)):
+        raise ValueError(
+            f"HATS output requires '{ra_column}' and '{dec_column}' columns in the final data."
+        )
+
+    catalog = lsdb.from_dataframe(
+        data,
+        use_pyarrow_types=False,
+        ra_column=ra_column,
+        dec_column=dec_column,
+    )
+    _write_catalog_like_to_hats(catalog, output_path)
+
+
+def _write_catalog_like_to_hats(catalog_like, output_path: Path):
+    """Write an LSDB catalog-like object as HATS."""
+    to_hats = getattr(catalog_like, "to_hats", None)
+    if not callable(to_hats):
+        raise RuntimeError("Could not find a compatible lsdb HATS writer in this environment.")
+
+    attempts = (
+        lambda: to_hats(
+            str(output_path),
+            catalog_name=output_path.stem,
+            overwrite=True,
+            progress_bar=False,
+            as_collection=False,
+        ),
+        lambda: to_hats(
+            str(output_path),
+            catalog_name=output_path.stem,
+            overwrite=True,
+            progress_bar=False,
+        ),
+        lambda: to_hats(str(output_path), overwrite=True, progress_bar=False),
+        lambda: to_hats(str(output_path)),
+    )
+
+    last_error = None
+    for run in attempts:
+        try:
+            result = run()
+            if hasattr(result, "compute") and callable(result.compute):
+                result.compute()
+            return
+        except TypeError as error:
+            last_error = error
+            continue
+        except Exception as error:
+            last_error = error
+            continue
+
+    raise RuntimeError(
+        f"Could not write HATS output with available lsdb writer method: {last_error}"
+    )
 
 
 class NotTableError(TypeError):

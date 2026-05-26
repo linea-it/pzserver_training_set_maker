@@ -86,8 +86,6 @@ class Param(BaseModel):
         n_neighbors: int = 1
 
     crossmatch: Crossmatch = Crossmatch()
-    ## Currently, "duplicate_criteria" is the only option.
-    # duplicate_criteria: str = "closest"
     use_absolute_lsdb_path: bool = False
     selected_cols: list[str] = []
     flux_type: str = "auto"
