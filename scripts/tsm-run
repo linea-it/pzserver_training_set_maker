@@ -315,10 +315,72 @@ class Runner:
         path = Path(input_path)
         if not path.exists() or not path.is_dir():
             return False
-        return any(
-            path.joinpath(filename).exists()
-            for filename in ("hats.properties", "properties")
-        )
+        max_depth = 2
+        candidates = [
+            p
+            for p in path.rglob("*")
+            if p.is_file() and self.__relative_depth(path, p) <= max_depth
+        ]
+
+        properties_candidates = [
+            p for p in candidates if self.__looks_like_properties_filename(p.name)
+        ]
+        if properties_candidates:
+            return any(self.__is_hats_properties_file(p) for p in properties_candidates)
+
+        text_candidates = [p for p in candidates if self.__looks_like_text_file(p)]
+        return any(self.__is_hats_properties_file(p) for p in text_candidates)
+
+    def __relative_depth(self, root_path, file_path):
+        return len(file_path.relative_to(root_path).parts) - 1
+
+    def __looks_like_properties_filename(self, name):
+        return str(name).lower().endswith("properties")
+
+    def __looks_like_text_file(self, path):
+        if self.__looks_like_properties_filename(path.name):
+            return True
+        return path.suffix.lower() in {
+            "",
+            ".txt",
+            ".cfg",
+            ".conf",
+            ".ini",
+            ".yaml",
+            ".yml",
+        }
+
+    def __is_hats_properties_file(self, filepath):
+        try:
+            with filepath.open("rb") as handle:
+                text = handle.read(262144).decode("utf-8", errors="ignore")
+        except Exception:
+            return False
+        return self.__is_hats_properties_text(text)
+
+    def __is_hats_properties_text(self, text):
+        hats_keys = {
+            "catalog_name",
+            "obs_collection",
+            "hats_col_ra",
+            "hats_col_dec",
+            "hats_order",
+            "hats_nrows",
+            "hats_builder",
+            "hats_version",
+        }
+        has_property_line = False
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key = line.split("=", 1)[0].strip().lower()
+            if not key:
+                continue
+            has_property_line = True
+            if key.startswith("hats_") or key in hats_keys:
+                return True
+        return False if has_property_line else False
 
     def __get_catalog_columns(self, dataset_path):
         """Get catalog columns excluding legacy HATS partition columns."""
@@ -364,8 +426,7 @@ class Runner:
         if missing:
             raise ValueError(
                 "inputs.specz[0].columns must define required keys: "
-                "ra, dec, z. Missing: "
-                + ", ".join(missing)
+                "ra, dec, z. Missing: " + ", ".join(missing)
             )
 
     def __split_train_test(
