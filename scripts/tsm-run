@@ -258,6 +258,9 @@ class Runner:
                 self.output_format,
                 ra_column=hats_ra_col,
                 dec_column=hats_dec_col,
+                temp_dir=Path(self.cwd, "temp"),
+                client=client,
+                logger=self.logger,
             )
 
             columns_suffix = {}
