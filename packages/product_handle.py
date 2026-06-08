@@ -140,12 +140,34 @@ def _write_hats_output(
             f"HATS output requires '{ra_column}' and '{dec_column}' columns in the final data."
         )
 
-    # LSDB catalog-like outputs can be written lazily by LSDB itself.
     if (
         hasattr(data, "write_catalog")
         and callable(getattr(data, "write_catalog"))
     ) or (hasattr(data, "to_hats") and callable(getattr(data, "to_hats"))):
-        _write_catalog_like_to_hats(data, output_path)
+        _log_info(
+            logger,
+            "Writing LSDB catalog-like HATS output via parquet staging before threshold-based HATS build: %s",
+            output_path,
+        )
+        parquet_path = _stage_catalog_like_output_parquet(
+            data,
+            output_path,
+            temp_dir,
+            logger,
+        )
+        build_collection_with_retry(
+            parquet_path=parquet_path,
+            output_path=output_path,
+            output_artifact_name=output_path.name,
+            catalog_artifact_name="catalog",
+            margin_artifact_name=_margin_artifact_name(),
+            client=client,
+            logger=logger,
+            ra_column=ra_column,
+            dec_column=dec_column,
+            try_margin=True,
+            size_threshold_mb=size_threshold_mb,
+        )
         return
 
     if _is_dask_dataframe(data):
@@ -271,6 +293,33 @@ def _stage_hats_output_parquet(data, output_path: Path, temp_dir, logger):
         pq.write_table(table, parquet_path / "part-0.parquet")
 
     return parquet_path
+
+
+def _stage_catalog_like_output_parquet(catalog_like, output_path: Path, temp_dir, logger):
+    """Stage an LSDB catalog-like object as parquet without collecting it in the driver."""
+    to_dask_dataframe = getattr(catalog_like, "to_dask_dataframe", None)
+    if callable(to_dask_dataframe):
+        try:
+            return _stage_hats_output_parquet(
+                to_dask_dataframe(),
+                output_path,
+                temp_dir,
+                logger,
+            )
+        except Exception as error:
+            _log_warning(
+                logger,
+                "Could not stage catalog via to_dask_dataframe(); trying internal _ddf. Reason: %s",
+                error,
+            )
+
+    ddf = getattr(catalog_like, "_ddf", None)
+    if ddf is None:
+        raise RuntimeError(
+            "Could not stage LSDB catalog-like output as parquet: no to_dask_dataframe() or _ddf available."
+        )
+
+    return _stage_hats_output_parquet(ddf, output_path, temp_dir, logger)
 
 
 def build_collection_with_retry(
@@ -447,8 +496,17 @@ def _write_catalog_like_to_hats(catalog_like, output_path: Path):
     if callable(write_catalog):
         attempts.extend(
             [
-                lambda: write_catalog(str(output_path), as_collection=True, overwrite=True),
-                lambda: write_catalog(str(output_path), overwrite=True),
+                lambda: write_catalog(
+                    str(output_path),
+                    catalog_name="catalog",
+                    as_collection=True,
+                    overwrite=True,
+                ),
+                lambda: write_catalog(
+                    str(output_path),
+                    catalog_name="catalog",
+                    overwrite=True,
+                ),
                 lambda: write_catalog(str(output_path)),
             ]
         )
@@ -457,14 +515,14 @@ def _write_catalog_like_to_hats(catalog_like, output_path: Path):
             [
                 lambda: to_hats(
                     str(output_path),
-                    catalog_name=output_path.stem,
+                    catalog_name="catalog",
                     overwrite=True,
                     progress_bar=False,
-                    as_collection=False,
+                    as_collection=True,
                 ),
                 lambda: to_hats(
                     str(output_path),
-                    catalog_name=output_path.stem,
+                    catalog_name="catalog",
                     overwrite=True,
                     progress_bar=False,
                 ),
