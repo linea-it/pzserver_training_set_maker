@@ -30,16 +30,18 @@ inputs:
   specz:
     - path: "<DATASETS_DIR>/specz.parquet"
       format: "parquet"
+      # format: "hats"
       columns:
         ra: "ra"
         dec: "dec"
+        z: "z"
 
 output_dir: "outputs"
+# Supported output formats: specz, csv, fits, parquet, hdf5, hats
 output_format: "csv"
 output_name: "tsm"
 
 param:
-  # duplicate_criteria: "closest"
   use_absolute_lsdb_path: false
   selected_cols: []
   flux_type: "auto"
