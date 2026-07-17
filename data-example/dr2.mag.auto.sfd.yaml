@@ -1,0 +1,24 @@
+input:
+  catalog_path: dr2/mag/auto/sfd/catalog
+  user_selected_cols:
+    - id
+    - ra
+    - dec
+  which_release: dr2
+  input_col_type: mag_dered
+  compute_magnitude: false
+  compute_dereddening: false
+  keep_input_columns_after_filters_or_transformations: true
+  col_pattern: MAG_BAND
+  err_pattern: MAGERR_BAND
+  selected_bands: []
+  ra_col: ra
+  dec_col: dec
+  band_case: lower_case
+
+output:
+  col_final_pattern: mag_BAND
+  err_final_pattern: magerr_BAND
+  band_case: lower_case
+  save_as: hats
+  hats_artifact_name: catalog

@@ -2,17 +2,18 @@
 
 import argparse
 import datetime
+import hashlib
 import os
 import time
 from pathlib import Path
-import hashlib
+
 import numpy as np
 import pandas as pd
-import pyarrow.parquet as pq
 
 import lsdb
 from dask.distributed import Client
 from executor import get_executor
+from photometric_dataset import PhotometricDatasetResolver
 from product_handle import ProductHandle, create_output
 from utils import (
     copy_directory,
@@ -112,6 +113,13 @@ class Runner:
 
         # Get dask executor
         self.cluster = get_executor(self.executors)
+        self.photometric_dataset_resolver = PhotometricDatasetResolver(
+            inputs=self.inputs,
+            param=self.param,
+            cwd=self.cwd,
+            logger=self.logger,
+            add_info=self.add_info,
+        )
 
     def __enter__(self):
         return self
@@ -139,13 +147,16 @@ class Runner:
 
         specz_path = str(specz.get("path"))
         specz_format = str(specz.get("format", "")).lower()
-        specz_is_hats = specz_format == "hats" or self.__is_hats_catalog_path(
-            specz_path
+        specz_is_hats = (
+            specz_format == "hats"
+            or self.photometric_dataset_resolver.is_hats_catalog_path(specz_path)
         )
 
         with Client(self.cluster) as client:
             if specz_is_hats:
-                specz_catalog_columns = self.__get_catalog_columns(specz_path)
+                specz_catalog_columns = (
+                    self.photometric_dataset_resolver.get_catalog_columns(specz_path)
+                )
                 self.logger.debug(
                     "Opening specz as HATS catalog with projected columns: path=%s columns=%s",
                     specz_path,
@@ -161,27 +172,17 @@ class Runner:
                     df, use_pyarrow_types=False, ra_column=ra, dec_column=dec
                 )
 
-            dataset_path = self.__get_photometric_data_path()
-
-            if not os.path.exists(dataset_path):
-                self.logger.error("Dataset path does not exist: %s", str(dataset_path))
-                raise FileNotFoundError(
-                    f"Dataset path does not exist: {str(dataset_path)}"
-                )
-
             selected_cols = self.param.get("selected_cols", [])
             if selected_cols is None:
                 selected_cols = []
             if not isinstance(selected_cols, list):
                 raise ValueError("param.selected_cols must be a list")
 
-            open_catalog_args = {}
-            if selected_cols:
-                open_catalog_args["columns"] = selected_cols
-            else:
-                open_catalog_args["columns"] = self.__get_catalog_columns(dataset_path)
-
-            dataset = lsdb.open_catalog(dataset_path, **open_catalog_args)
+            dataset, dataset_path = self.photometric_dataset_resolver.resolve(
+                client=client,
+                selected_cols=selected_cols,
+            )
+            self.add_info("photometric_dataset_path", dataset_path)
             cm_args = self.param.get("crossmatch", {})
             cm_args["suffix_method"] = "all_columns"
             self.logger.debug("Crossmatch args: %s", cm_args)
@@ -287,118 +288,6 @@ class Runner:
             self.logdir,
             str(Path(self.output_root_dir, self.output_dir, "process_info")),
         )
-
-    def __get_photometric_data_path(self):
-        """Get photometric data path
-
-        Returns:
-            str: dataset path
-        """
-        dataset_path = self.inputs.get("dataset").get("path")
-
-        if self.param.get("use_absolute_lsdb_path", False):
-            return str(dataset_path)
-
-        flux_type = self.param.get("flux_type")
-        convert_flux_to_mag = self.param.get("convert_flux_to_mag")
-
-        if convert_flux_to_mag:
-            flux_or_mag = "mag"
-        else:
-            flux_or_mag = "flux"
-
-        dereddening = self.param.get("dereddening")
-
-        ptmd_path = Path(dataset_path, flux_or_mag, flux_type, dereddening, "catalog")
-
-        return str(ptmd_path)
-
-    def __is_hats_catalog_path(self, input_path):
-        """Detect whether a path points to a HATS catalog directory."""
-        path = Path(input_path)
-        if not path.exists() or not path.is_dir():
-            return False
-        max_depth = 2
-        candidates = [
-            p
-            for p in path.rglob("*")
-            if p.is_file() and self.__relative_depth(path, p) <= max_depth
-        ]
-
-        properties_candidates = [
-            p for p in candidates if self.__looks_like_properties_filename(p.name)
-        ]
-        if properties_candidates:
-            return any(self.__is_hats_properties_file(p) for p in properties_candidates)
-
-        text_candidates = [p for p in candidates if self.__looks_like_text_file(p)]
-        return any(self.__is_hats_properties_file(p) for p in text_candidates)
-
-    def __relative_depth(self, root_path, file_path):
-        return len(file_path.relative_to(root_path).parts) - 1
-
-    def __looks_like_properties_filename(self, name):
-        return str(name).lower().endswith("properties")
-
-    def __looks_like_text_file(self, path):
-        if self.__looks_like_properties_filename(path.name):
-            return True
-        return path.suffix.lower() in {
-            "",
-            ".txt",
-            ".cfg",
-            ".conf",
-            ".ini",
-            ".yaml",
-            ".yml",
-        }
-
-    def __is_hats_properties_file(self, filepath):
-        try:
-            with filepath.open("rb") as handle:
-                text = handle.read(262144).decode("utf-8", errors="ignore")
-        except Exception:
-            return False
-        return self.__is_hats_properties_text(text)
-
-    def __is_hats_properties_text(self, text):
-        hats_keys = {
-            "catalog_name",
-            "obs_collection",
-            "hats_col_ra",
-            "hats_col_dec",
-            "hats_order",
-            "hats_nrows",
-            "hats_builder",
-            "hats_version",
-        }
-        has_property_line = False
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key = line.split("=", 1)[0].strip().lower()
-            if not key:
-                continue
-            has_property_line = True
-            if key.startswith("hats_") or key in hats_keys:
-                return True
-        return False if has_property_line else False
-
-    def __get_catalog_columns(self, dataset_path):
-        """Get catalog columns excluding legacy HATS partition columns."""
-
-        hats_partition_cols = {"Norder", "Dir", "Npix"}
-        parquet_files = sorted(Path(dataset_path).rglob("*.parquet"))
-
-        if not parquet_files:
-            return []
-
-        schema = pq.read_schema(parquet_files[0])
-        columns = [name for name in schema.names if name not in hats_partition_cols]
-        self.logger.debug("Opening catalog with projected columns: %s", columns)
-
-        return columns
 
     def __get_columns_associations(self, columns, specz_columns):
         """Get columns associations of the product output
