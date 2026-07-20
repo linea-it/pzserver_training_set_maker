@@ -142,8 +142,66 @@ class PhotometricDatasetResolver:
             client=client,
             **open_kwargs,
         )
+        margin_threshold = config.get("collection", {}).get("margin_threshold")
+        self.ensure_default_margin_metadata(result["path"], margin_threshold)
         self.logger.info("science_catalogs generated HATS dataset at: %s", result["path"])
-        return result["data"], str(result["path"])
+        return lsdb.open_catalog(result["path"], **open_kwargs), str(result["path"])
+
+    def ensure_default_margin_metadata(self, catalog_path, margin_threshold=None):
+        """Ensure LSDB opens generated HATS collections with their default margin cache."""
+        properties_path = Path(catalog_path) / "collection.properties"
+        if not properties_path.exists():
+            return
+
+        lines = properties_path.read_text(encoding="utf-8").splitlines()
+        if any(line.startswith("default_margin=") for line in lines):
+            return
+
+        for index, line in enumerate(lines):
+            if not line.startswith("all_margins="):
+                continue
+            margin_names = [
+                name.strip() for name in line.split("=", 1)[1].split(",") if name.strip()
+            ]
+            if not margin_names:
+                return
+
+            margin_name = self.get_configured_margin_name(
+                margin_names,
+                margin_threshold,
+            )
+            if margin_name is None:
+                self.logger.warning(
+                    "Generated collection has multiple margins but no default_margin; "
+                    "leaving metadata unchanged because no configured margin could be selected: %s",
+                    margin_names,
+                )
+                return
+            lines.insert(index + 1, f"default_margin={margin_name}")
+            properties_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            self.logger.info(
+                "Added default HATS margin metadata for generated collection: %s",
+                margin_name,
+            )
+            return
+
+    def get_configured_margin_name(self, margin_names, margin_threshold):
+        """Return the margin matching the configured threshold, or the only available margin."""
+        if len(margin_names) == 1:
+            return margin_names[0]
+
+        if margin_threshold is None:
+            return None
+
+        threshold = float(margin_threshold)
+        threshold_label = (
+            str(int(threshold)) if threshold.is_integer() else str(threshold)
+        )
+        configured_name = f"margin_{threshold_label}arcs"
+        if configured_name in margin_names:
+            return configured_name
+
+        return None
 
     def get_science_catalogs_output_dir(self, config_path):
         """Return a stable per-config directory for generated science_catalogs HATS outputs."""

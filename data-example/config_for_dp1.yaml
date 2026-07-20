@@ -1,0 +1,52 @@
+##################################################################
+# Move this file to the root pipeline directory before running
+# Download the dustmaps to examples/dustmaps/sfd before running.
+# (base) user@user-pc:~/pzserver_training_set_maker$ ./install.sh
+# (base) user@user-pc:~/pzserver_training_set_maker$ micromamba activate pipe_tsm
+# (pipe_tsm) user@user-pc:~/pzserver_training_set_maker$ ./setup.sh
+# (pipe_tsm) user@user-pc:~/pzserver_training_set_maker$ source env.sh
+# (pipe_tsm) user@user-pc:~/pzserver_training_set_maker$ python
+# >>> import dustmaps.sfd
+# >>> dustmaps.sfd.fetch()
+# >>> exit()
+
+
+executor: 
+  name: "local"   # or "slurm"
+  args:
+    n_workers: 3
+    threads_per_worker: 2
+    memory_limit: "4GB"
+
+inputs:
+  dataset:
+    path: "/home/luigi/linea/pzserver_training_set_maker/data-example/dp1"
+    columns:
+      id: "objectId"
+  specz:
+    - path: "/home/luigi/linea/pzserver_training_set_maker/data-example/dp1_specz_collection"
+      format: "hats"
+      columns:
+        ra: "ra"
+        dec: "dec"
+        z: "z"
+        z_flag: "z_flag"
+        z_err: "z_err"
+        survey: "survey"
+
+output_dir: "outputs"
+output_format: "hats"
+output_name: "tsm"
+
+param:
+  use_absolute_lsdb_path: false
+  selected_cols: []
+  flux_type: "cmodel"
+  convert_flux_to_mag: true
+  dereddening: "sfd"
+  split_method: "random"
+  train_fraction: 0.7
+  random_seed: null
+  crossmatch:
+    radius_arcsec: 1.0
+    n_neighbors: 1
