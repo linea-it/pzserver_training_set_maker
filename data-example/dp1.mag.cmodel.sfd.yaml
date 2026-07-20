@@ -1,6 +1,3 @@
-# Run example:
-# science-catalogs examples/configs/lsst_dp1_cmodel_mag_dered.yml examples/output/lsst_dp1_cmodel_mag_dered
-
 input:
   catalog_folder: dp1/
   catalog_pattern: "lsst_dp1_scrambled_sample_1000.parq"

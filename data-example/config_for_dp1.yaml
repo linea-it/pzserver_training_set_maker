@@ -20,11 +20,11 @@ executor:
 
 inputs:
   dataset:
-    path: "/home/luigi/linea/pzserver_training_set_maker/data-example/dp1"
+    path: "~/pzserver_training_set_maker/data-example/dp1"
     columns:
       id: "objectId"
   specz:
-    - path: "/home/luigi/linea/pzserver_training_set_maker/data-example/dp1_specz_collection"
+    - path: "~/pzserver_training_set_maker/data-example/dp1_specz_collection"
       format: "hats"
       columns:
         ra: "ra"
