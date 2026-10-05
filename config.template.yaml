@@ -24,14 +24,9 @@ executor:
 
 inputs:
   dataset:
-    # Base dataset path. The pipeline will first look for a science_catalogs
-    # config derived from the current photometric mode, for example:
-    #   <DATASETS_DIR>/dr2.mag.auto.sfd.yaml
-    # If that YAML does not exist, it falls back to the legacy HATS path:
-    #   <DATASETS_DIR>/dr2/mag/auto/sfd/catalog
-    # You can also point directly to an existing HATS catalog or to a
-    # science_catalogs YAML file.
-    path: "<DATASETS_DIR>/dr2"
+    # Release root used to resolve relative paths in param.hats_config. When
+    # hats_config is empty, this must point directly to an existing HATS catalog.
+    path: "<DATASETS_DIR>/dp1"
     columns:
       id: "id"
   specz:
@@ -49,13 +44,12 @@ output_format: "csv"
 output_name: "tsm"
 
 param:
-  # When true, dataset.path is treated as a direct path. It can point to a
-  # HATS catalog or to a science_catalogs YAML file.
-  use_absolute_lsdb_path: false
+  # Empty loads every column from the LSDB photometric catalog.
   selected_cols: []
-  flux_type: "auto"
-  convert_flux_to_mag: true
-  dereddening: "sfd"
+  flux_type: "cModel"
+  convert_flux_to_mag: false
+  dereddening: "none"
+  hats_config: {}
   split_method: "random"
   train_fraction: 0.7
   random_seed: null

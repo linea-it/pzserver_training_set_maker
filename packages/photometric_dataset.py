@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import os
+from collections.abc import Mapping
+from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
 import lsdb
 import pyarrow.parquet as pq
 
-from utils import load_yml
+from utils import dump_yml, load_yml
 
 
 class PhotometricDatasetResolver:
@@ -32,88 +33,67 @@ class PhotometricDatasetResolver:
         self.add_info = add_info
 
     def resolve(self, client, selected_cols):
-        """Resolve the photometric dataset from science_catalogs YAML or an existing HATS catalog."""
-        dataset_base_path = Path(self.get_dataset_base_path())
-        attempted_paths = []
+        """Build from submitted config or open a directly configured HATS catalog."""
+        dataset_path = Path(self.get_dataset_path())
 
-        for candidate in self.get_science_catalog_config_candidates():
-            attempted_paths.append(str(candidate))
-            if candidate.is_file():
-                self.logger.info(
-                    "Resolved photometric dataset via science_catalogs config: %s",
-                    candidate,
-                )
-                self.add_info("photometric_dataset_source", "science_catalogs")
-                self.add_info("photometric_dataset_config", str(candidate))
-                return self.build_dataset_from_science_catalogs(
-                    config_path=candidate,
-                    client=client,
-                    selected_cols=selected_cols,
-                )
+        runtime_config_path = self.create_runtime_science_catalogs_config()
+        if runtime_config_path is not None:
+            self.logger.info(
+                "Resolved photometric dataset via submitted param.hats_config: %s",
+                runtime_config_path,
+            )
+            self.add_info("photometric_dataset_source", "science_catalogs")
+            self.add_info(
+                "photometric_dataset_config_source",
+                "param.hats_config",
+            )
+            self.add_info(
+                "photometric_dataset_config",
+                str(runtime_config_path),
+            )
+            return self.build_dataset_from_science_catalogs(
+                config_path=runtime_config_path,
+                client=client,
+                selected_cols=selected_cols,
+            )
 
-        if dataset_base_path.exists() and self.is_hats_catalog_path(dataset_base_path):
+        if dataset_path.exists() and self.is_hats_catalog_path(dataset_path):
             self.logger.info(
                 "Resolved photometric dataset as direct HATS path: %s",
-                dataset_base_path,
-            )
-            self.add_info("photometric_dataset_source", "hats")
-            return self.open_hats_dataset(str(dataset_base_path), selected_cols)
-
-        dataset_path = self.get_legacy_hats_path()
-        attempted_paths.append(str(dataset_path))
-        if os.path.exists(dataset_path):
-            self.logger.info(
-                "Resolved photometric dataset as legacy HATS path: %s",
                 dataset_path,
             )
-            self.add_info("photometric_dataset_source", "legacy_hats")
-            return self.open_hats_dataset(dataset_path, selected_cols)
+            self.add_info("photometric_dataset_source", "hats")
+            return self.open_hats_dataset(str(dataset_path), selected_cols)
 
-        self.logger.error(
-            "Could not resolve photometric dataset. Tried: %s",
-            attempted_paths,
+        message = (
+            "Could not resolve photometric dataset: param.hats_config is empty "
+            "and inputs.dataset.path is not a HATS catalog: "
+            f"{dataset_path}"
         )
-        raise FileNotFoundError(
-            "Could not resolve photometric dataset. Tried: "
-            + ", ".join(attempted_paths)
+        self.logger.error(message)
+        raise FileNotFoundError(message)
+
+    def create_runtime_science_catalogs_config(self):
+        """Persist submitted HATS config for the file-based science_catalogs API."""
+        submitted_config = self.param.get("hats_config")
+        if submitted_config is None or submitted_config == {}:
+            return None
+
+        if not isinstance(submitted_config, Mapping):
+            raise ValueError("param.hats_config must be an object")
+
+        config = self.resolve_science_catalogs_config_paths(
+            submitted_config,
+            config_dir=Path(self.get_dataset_path()),
         )
+        runtime_config_path = Path(self.cwd, "science_catalogs_hats_config.yaml")
+        runtime_config_path.parent.mkdir(parents=True, exist_ok=True)
+        dump_yml(runtime_config_path, config)
+        return runtime_config_path
 
-    def get_legacy_hats_path(self):
-        """Build the legacy derived HATS dataset path."""
-        dataset_path = self.inputs.get("dataset").get("path")
-
-        if self.param.get("use_absolute_lsdb_path", False):
-            return str(dataset_path)
-
-        flux_type = self.param.get("flux_type")
-        convert_flux_to_mag = self.param.get("convert_flux_to_mag")
-        flux_or_mag = "mag" if convert_flux_to_mag else "flux"
-        dereddening = self.param.get("dereddening")
-        return str(Path(dataset_path, flux_or_mag, flux_type, dereddening, "catalog"))
-
-    def get_dataset_base_path(self):
-        """Return the configured dataset base path without derived suffixes."""
+    def get_dataset_path(self):
+        """Return the dataset path provided in the process configuration."""
         return str(self.inputs.get("dataset").get("path"))
-
-    def get_science_catalog_config_candidates(self):
-        """Return possible science_catalogs config paths for the current photometric mode."""
-        dataset_base_path = Path(self.get_dataset_base_path())
-        suffix = dataset_base_path.suffix.lower()
-        if suffix in {".yaml", ".yml"}:
-            return [dataset_base_path]
-
-        if self.param.get("use_absolute_lsdb_path", False):
-            return []
-
-        flux_type = self.param.get("flux_type")
-        convert_flux_to_mag = self.param.get("convert_flux_to_mag")
-        flux_or_mag = "mag" if convert_flux_to_mag else "flux"
-        dereddening = self.param.get("dereddening")
-        stem = f"{dataset_base_path.name}.{flux_or_mag}.{flux_type}.{dereddening}"
-        return [
-            dataset_base_path.parent / f"{stem}.yaml",
-            dataset_base_path.parent / f"{stem}.yml",
-        ]
 
     def build_dataset_from_science_catalogs(self, config_path, client, selected_cols):
         """Run science_catalogs from a YAML config and reopen the resulting HATS catalog lazily."""
@@ -121,13 +101,11 @@ class PhotometricDatasetResolver:
             from science_catalogs import materialize_lsdb_catalog, prepare_catalog
         except ImportError as exc:
             raise RuntimeError(
-                "science_catalogs is required when dataset.path resolves to a YAML config."
+                "science_catalogs is required when param.hats_config is provided."
             ) from exc
 
         output_dir = self.get_science_catalogs_output_dir(config_path)
-        open_kwargs = {}
-        if selected_cols:
-            open_kwargs["columns"] = selected_cols
+        open_kwargs = self.get_open_catalog_args(selected_cols)
 
         self.logger.info(
             "Building photometric dataset from science_catalogs config: %s -> %s",
@@ -212,41 +190,56 @@ class PhotometricDatasetResolver:
         return Path(self.cwd, "temp", "science_catalogs", f"{config_path.stem}_{digest}")
 
     def load_science_catalogs_config(self, config_path):
-        """Load a science_catalogs YAML and resolve relative paths against its parent directory."""
+        """Load a science_catalogs YAML and resolve its relative paths."""
         config_path = Path(config_path)
         config = load_yml(str(config_path))
-        config_dir = config_path.parent
+        return self.resolve_science_catalogs_config_paths(
+            config,
+            config_dir=config_path.parent,
+        )
 
-        input_cfg = config.get("input", {})
-        for key in ("catalog_path", "catalog_folder"):
-            value = input_cfg.get(key)
+    def resolve_science_catalogs_config_paths(self, config, config_dir):
+        """Resolve release-relative infrastructure paths without mutating input."""
+        if not isinstance(config, Mapping):
+            raise ValueError("HATS science_catalogs configuration must be an object")
+
+        resolved_config = deepcopy(dict(config))
+        config_dir = Path(config_dir)
+
+        input_cfg = resolved_config.get("input", {})
+        if isinstance(input_cfg, dict):
+            for key in ("catalog_path", "catalog_folder"):
+                value = input_cfg.get(key)
+                if (
+                    isinstance(value, str)
+                    and value
+                    and not Path(value).expanduser().is_absolute()
+                ):
+                    input_cfg[key] = str((config_dir / value).resolve())
+
+        dust_cfg = resolved_config.get("dust", {})
+        if isinstance(dust_cfg, dict):
+            dust_path = dust_cfg.get("path_to_dustmaps")
             if (
-                isinstance(value, str)
-                and value
-                and not Path(value).expanduser().is_absolute()
+                isinstance(dust_path, str)
+                and dust_path
+                and not Path(dust_path).expanduser().is_absolute()
             ):
-                input_cfg[key] = str((config_dir / value).resolve())
+                dust_cfg["path_to_dustmaps"] = str(
+                    (config_dir / dust_path).resolve()
+                )
 
-        dust_cfg = config.get("dust", {})
-        dust_path = dust_cfg.get("path_to_dustmaps")
-        if (
-            isinstance(dust_path, str)
-            and dust_path
-            and not Path(dust_path).expanduser().is_absolute()
-        ):
-            dust_cfg["path_to_dustmaps"] = str((config_dir / dust_path).resolve())
-
-        return config
+        return resolved_config
 
     def open_hats_dataset(self, dataset_path, selected_cols):
         """Open an existing HATS dataset with optional column projection."""
-        open_catalog_args = {}
-        if selected_cols:
-            open_catalog_args["columns"] = selected_cols
-        else:
-            open_catalog_args["columns"] = self.get_catalog_columns(dataset_path)
+        open_catalog_args = self.get_open_catalog_args(selected_cols)
 
         return lsdb.open_catalog(dataset_path, **open_catalog_args), str(dataset_path)
+
+    def get_open_catalog_args(self, selected_cols):
+        """Select explicit columns or load every LSDB column by default."""
+        return {"columns": selected_cols if selected_cols else "all"}
 
     def is_hats_catalog_path(self, input_path):
         """Detect whether a path points to a HATS catalog directory."""
