@@ -1,0 +1,78 @@
+input:
+  catalog_folder: /datasets/dp1/
+  catalog_pattern: "lsst_dp1_scrambled_sample_1000.parq"
+  which_release: LSST_DP1
+  user_selected_cols:
+    - objectId
+    - coord_ra
+    - coord_dec
+    - u_<FLUX><MAG_OR_FLUX>
+    - g_<FLUX><MAG_OR_FLUX>
+    - r_<FLUX><MAG_OR_FLUX>
+    - i_<FLUX><MAG_OR_FLUX>
+    - z_<FLUX><MAG_OR_FLUX>
+    - y_<FLUX><MAG_OR_FLUX>
+    - u_<FLUX><MAG_OR_FLUX>Err
+    - g_<FLUX><MAG_OR_FLUX>Err
+    - r_<FLUX><MAG_OR_FLUX>Err
+    - i_<FLUX><MAG_OR_FLUX>Err
+    - z_<FLUX><MAG_OR_FLUX>Err
+    - y_<FLUX><MAG_OR_FLUX>Err
+    - detect_fromBlend
+    - detect_isDeblendedModelSource
+    - detect_isIsolated
+    - refExtendedness
+    - tract
+    - patch
+  input_col_type: <MAG_OR_FLUX>
+  input_col_model: <FLUX><MAG_OR_FLUX>
+  compute_magnitude: true
+  compute_dereddening: true
+  col_pattern: BAND_<FLUX><MAG_OR_FLUX>
+  err_pattern: BAND_<FLUX><MAG_OR_FLUX>Err
+  selected_bands: [u, g, r, i, z, y]
+  ra_col: coord_ra
+  dec_col: coord_dec
+
+output:
+  save_as: hats
+  hats_artifact_name: dp1_<MAG_OR_FLUX>_<FLUX>_<DEREDDENING>
+  col_final_pattern: BAND_<FLUX><MAG_OR_FLUX>_<DEREDDENING>
+  err_final_pattern: BAND_<FLUX><MAG_OR_FLUX>Err_<DEREDDENING>
+  mag_offset: 31.4
+  A_EBV:
+    u: 4.81
+    g: 3.64
+    r: 2.70
+    i: 2.06
+    z: 1.58
+    y: 1.31
+
+invalid_handling:
+  replace_invalid_values: true
+  how_to_replace_col_values: all
+  how_to_replace_err_values: only_with_invalid_col
+  col_value_to_replace: 99.0
+  err_value_to_replace: 99.0
+  set_limit_for_col: true
+  limit_value_for_col: 99.0
+  limit_comparison_for_col: greater_or_equal
+  use_absolute_for_col_limits: true
+  set_limit_for_err: true
+  limit_value_for_err: 99.0
+  limit_comparison_for_err: greater_or_equal
+  use_absolute_for_err_limits: true
+
+cluster:
+  executor: local
+  local:
+    n_workers: 2
+    threads_per_worker: 2
+    memory_limit: "1GiB"
+
+dust:
+  path_to_dustmaps: null
+  use_dustmap: sfd
+
+collection:
+  margin_threshold: 10.0

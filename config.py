@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 DATASETS_DIR = os.getenv("DATASETS_DIR", "/datasets")
 DASK_EXECUTOR = os.getenv("DASK_EXECUTOR", "local")
@@ -86,11 +86,11 @@ class Param(BaseModel):
         n_neighbors: int = 1
 
     crossmatch: Crossmatch = Crossmatch()
-    use_absolute_lsdb_path: bool = False
     selected_cols: list[str] = []
     flux_type: str = "auto"
     convert_flux_to_mag: bool = True
     dereddening: str = "sfd"
+    hats_config: dict[str, Any] = Field(default_factory=dict)
     split_method: str = "random"
     train_fraction: float = 0.7
     random_seed: int | None = None

@@ -40,6 +40,21 @@ By default the scripts use `MAMBA_ROOT_PREFIX="$HOME/.micromamba"`. On a Slurm c
 export MAMBA_ROOT_PREFIX=/path/to/shared/or/persistent/micromamba
 ```
 
+## HATS configuration
+
+The pipeline accepts the effective `science_catalogs` configuration as the
+`param.hats_config` object in its process configuration. When this object is
+present and non-empty, TSM uses it to generate the HATS catalog.
+
+At runtime, TSM writes the object to `science_catalogs_hats_config.yaml` inside
+the process directory because the current `science_catalogs` API requires a
+file argument. This file is an execution artifact; the submitted object remains
+the source of truth. Relative catalog and dustmap paths are resolved against
+`inputs.dataset.path`.
+
+If `param.hats_config` is absent or empty, `inputs.dataset.path` must point
+directly to an existing HATS catalog. TSM does not discover YAML files or derive
+legacy HATS paths from the photometric parameters.
 
 ## Run a pipeline
 
@@ -50,4 +65,3 @@ To execute, simply:
 mkdir process001
 ./run.sh config.yaml process001
 ```
-
