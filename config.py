@@ -88,7 +88,7 @@ class Param(BaseModel):
     crossmatch: Crossmatch = Crossmatch()
     selected_cols: list[str] = []
     flux_type: str = "auto"
-    convert_flux_to_mag: bool = True
+    convert_flux_to_mag: bool = False
     dereddening: str = "sfd"
     hats_config: dict[str, Any] = Field(default_factory=dict)
     split_method: str = "random"
