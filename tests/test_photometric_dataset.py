@@ -42,14 +42,13 @@ class PhotometricDatasetResolverTestCase(unittest.TestCase):
             release_path.mkdir()
             submitted_config = {
                 "input": {
-                    "catalog_folder": "catalogs/object",
-                    "compute_magnitude": False,
+                    "catalog_path": "catalogs/object",
                 },
                 "dust": {
                     "path_to_dustmaps": "../dustmaps",
                     "use_dustmap": "planck",
                 },
-                "collection": {"margin_threshold": 10.0},
+                "collection": {"margin": {"threshold_arcsec": 10.0}},
             }
             resolver = self.create_resolver(
                 dataset_path=release_path,
@@ -72,7 +71,7 @@ class PhotometricDatasetResolverTestCase(unittest.TestCase):
             runtime_config = yaml.safe_load(runtime_path.read_text(encoding="utf-8"))
             self.assertEqual(
                 str((release_path / "catalogs/object").resolve()),
-                runtime_config["input"]["catalog_folder"],
+                runtime_config["input"]["catalog_path"],
             )
             self.assertEqual(
                 str((release_path / "../dustmaps").resolve()),
@@ -80,7 +79,7 @@ class PhotometricDatasetResolverTestCase(unittest.TestCase):
             )
             self.assertEqual(
                 "catalogs/object",
-                submitted_config["input"]["catalog_folder"],
+                submitted_config["input"]["catalog_path"],
             )
             self.add_info.assert_any_call(
                 "photometric_dataset_config_source",
@@ -94,9 +93,9 @@ class PhotometricDatasetResolverTestCase(unittest.TestCase):
             release_path.mkdir()
             generated_path = temp_path / "generated"
             submitted_config = {
-                "input": {"catalog_folder": "/datasets/dp1/catalog"},
+                "input": {"catalog_path": "/datasets/dp1/catalog"},
                 "dust": {"path_to_dustmaps": "/datasets/dustmaps"},
-                "collection": {"margin_threshold": 10.0},
+                "collection": {"margin": {"threshold_arcsec": 10.0}},
             }
             resolver = self.create_resolver(
                 dataset_path=release_path,
@@ -155,7 +154,7 @@ class PhotometricDatasetResolverTestCase(unittest.TestCase):
             release_path.mkdir()
             generated_path = temp_path / "generated"
             submitted_config = {
-                "input": {"catalog_folder": "/datasets/dp1/catalog"},
+                "input": {"catalog_path": "/datasets/dp1/catalog"},
             }
             resolver = self.create_resolver(
                 dataset_path=release_path,
@@ -193,6 +192,48 @@ class PhotometricDatasetResolverTestCase(unittest.TestCase):
             open_catalog.assert_called_once_with(
                 str(generated_path),
                 columns="all",
+            )
+
+    def test_canonical_margin_threshold_is_used_for_generated_hats_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            release_path = temp_path / "dp1"
+            release_path.mkdir()
+            generated_path = temp_path / "generated"
+            submitted_config = {
+                "input": {"catalog_path": "/datasets/dp1"},
+                "collection": {"margin": {"threshold_arcsec": 7.5}},
+            }
+            resolver = self.create_resolver(
+                dataset_path=release_path,
+                cwd=temp_path / "process",
+                param={"hats_config": submitted_config},
+            )
+            science_catalogs = types.ModuleType("science_catalogs")
+            science_catalogs.prepare_catalog = mock.Mock(
+                return_value="prepared-catalog"
+            )
+            science_catalogs.materialize_lsdb_catalog = mock.Mock(
+                return_value={"path": str(generated_path)}
+            )
+
+            with mock.patch.dict(
+                sys.modules,
+                {"science_catalogs": science_catalogs},
+            ), mock.patch.object(
+                sys.modules["lsdb"],
+                "open_catalog",
+                create=True,
+                return_value="opened-catalog",
+            ), mock.patch.object(
+                resolver,
+                "ensure_default_margin_metadata",
+            ) as ensure_default_margin_metadata:
+                resolver.resolve(client="client", selected_cols=[])
+
+            ensure_default_margin_metadata.assert_called_once_with(
+                str(generated_path),
+                7.5,
             )
 
     def test_empty_hats_config_opens_direct_hats_path(self):
@@ -261,7 +302,7 @@ class PhotometricDatasetResolverTestCase(unittest.TestCase):
             release_path = temp_path / "dp1"
             release_path.mkdir()
             (temp_path / "dp1.mag.auto.sfd.yaml").write_text(
-                "input:\n  catalog_folder: catalogs/object\n",
+                "input:\n  catalog_path: catalogs/object\n",
                 encoding="utf-8",
             )
             derived_hats_path = release_path / "mag/auto/sfd/catalog"

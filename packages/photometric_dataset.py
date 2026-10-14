@@ -120,10 +120,21 @@ class PhotometricDatasetResolver:
             client=client,
             **open_kwargs,
         )
-        margin_threshold = config.get("collection", {}).get("margin_threshold")
+        margin_threshold = self.get_configured_margin_threshold(config)
         self.ensure_default_margin_metadata(result["path"], margin_threshold)
         self.logger.info("science_catalogs generated HATS dataset at: %s", result["path"])
         return lsdb.open_catalog(result["path"], **open_kwargs), str(result["path"])
+
+    def get_configured_margin_threshold(self, config):
+        """Read the canonical science_catalogs margin threshold."""
+        collection = config.get("collection", {})
+        if not isinstance(collection, Mapping):
+            return None
+
+        margin = collection.get("margin", {})
+        if not isinstance(margin, Mapping):
+            return None
+        return margin.get("threshold_arcsec")
 
     def ensure_default_margin_metadata(self, catalog_path, margin_threshold=None):
         """Ensure LSDB opens generated HATS collections with their default margin cache."""
@@ -208,14 +219,15 @@ class PhotometricDatasetResolver:
 
         input_cfg = resolved_config.get("input", {})
         if isinstance(input_cfg, dict):
-            for key in ("catalog_path", "catalog_folder"):
-                value = input_cfg.get(key)
-                if (
-                    isinstance(value, str)
-                    and value
-                    and not Path(value).expanduser().is_absolute()
-                ):
-                    input_cfg[key] = str((config_dir / value).resolve())
+            catalog_path = input_cfg.get("catalog_path")
+            if (
+                isinstance(catalog_path, str)
+                and catalog_path
+                and not Path(catalog_path).expanduser().is_absolute()
+            ):
+                input_cfg["catalog_path"] = str(
+                    (config_dir / catalog_path).resolve()
+                )
 
         dust_cfg = resolved_config.get("dust", {})
         if isinstance(dust_cfg, dict):
