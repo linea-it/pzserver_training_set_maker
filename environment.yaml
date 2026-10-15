@@ -16,4 +16,4 @@ dependencies:
   - h5py=3.16.0
   - pip
   - pip:
-      - science-catalogs==0.1.0b8
+      - science-catalogs==0.1.0b10
